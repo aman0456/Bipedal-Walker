@@ -18,9 +18,9 @@ class Actor(torch.nn.Module):
 		self.inp_size=inp_size
 		layers = [
 			torch.nn.Linear(inp_size,64),
-			torch.nn.GELU(),
+			torch.nn.ReLU(),
 			torch.nn.Linear(64,128),
-			torch.nn.GELU(),
+			torch.nn.ReLU(),
 			torch.nn.Linear(128,8)
 		]
 
@@ -61,9 +61,9 @@ class Critic(torch.nn.Module):
 		self.inp_size=inp_size
 		layers = [
 			torch.nn.Linear(inp_size,64),
-			torch.nn.GELU(),
+			torch.nn.ReLU(),
 			torch.nn.Linear(64,128),
-			torch.nn.GELU(),
+			torch.nn.ReLU(),
 			torch.nn.Linear(128,1)
 		]
 
@@ -114,11 +114,16 @@ class Environment():
 			done=False
 			for _ in range(self.max_episode_steps):
 				state=torch.Tensor(state)
-				action_distri=self.actor(state) # torch.distribution
+				try:
+					action_distri=self.actor(state) # torch.distribution
+				except:
+					import pdb
+					pdb.set_trace()
 				value=self.critic(state)
 				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				sampled_action=sampled_action.clamp(-0.9999999,0.9999999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
-				if (ep_num+1)%100==0:
+				if ep_num%100==0:
 					self.val_env.step(sampled_action.cpu().numpy())
 				
 				
@@ -140,16 +145,13 @@ class Environment():
 			last10score[ep_num%10]=sum(rewards) + terminal_R if isinstance(terminal_R, int) else terminal_R.item()
 			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
 
-			return_vals=[terminal_R]
-			for r in rewards[::-1]:
-				return_vals.append(r+self.gamma*return_vals[-1])
-			return_vals= (return_vals[1:])[::-1] # to remove terminal R
+			with torch.no_grad():
+				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
 			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			log_probs=torch.stack(log_probs).to(DEVICE)
 			state_values=torch.cat(state_values).to(DEVICE)
 
 			adv=return_vals-state_values
-			
 			actor_loss=-torch.mean(log_probs*(adv.detach())).type(torch.float32)
 
 			critic_loss=self.critic_loss_func(state_values,return_vals).type(torch.float32)
