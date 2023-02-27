@@ -138,7 +138,7 @@ class Environment():
 				
 				curr_actor_trace=curr_actor_trace*self.actor_trace_decay*self.gamma+I*action_distri.log_prob(sampled_action)
 				actor_traces.append(curr_actor_trace)
-				curr_critic_trace=curr_critic_trace*self.actor_trace_decay*self.gamma+I*value
+				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+I*value
 				critic_traces.append(curr_critic_trace)
 				
 				I=I*self.gamma
