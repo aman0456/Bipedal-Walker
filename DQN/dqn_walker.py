@@ -146,13 +146,13 @@ class Environment():
 			return_vals= (return_vals[1:])[::-1] # to remove terminal R
 			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			log_probs=torch.stack(log_probs).to(DEVICE)
-			state_values=torch.stack(state_values).to(DEVICE)
+			state_values=torch.cat(state_values).to(DEVICE)
 
 			adv=return_vals-state_values
 			
 			actor_loss=-torch.mean(log_probs*(adv.detach())).type(torch.float32)
 
-			critic_loss=self.critic_loss_func(state_values.squeeze(),return_vals).type(torch.float32)
+			critic_loss=self.critic_loss_func(state_values,return_vals).type(torch.float32)
 			actor_optimizer.zero_grad()
 			critic_optimizer.zero_grad()
 			actor_loss.backward()
