@@ -163,17 +163,30 @@ class Environment():
 			######ONE WAY to find return vals
 			# with torch.no_grad():
 			# 	return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
 			######METHOD 2 to find return vals
-			return_vals=[terminal_R]
-			for r in rewards[::-1]:
-				return_vals.append(r+self.gamma*return_vals[-1])
-			return_vals= (return_vals[1:])[::-1] # to remove terminal R
+			# return_vals=[terminal_R]
+			# for r in rewards[::-1]:
+			# 	return_vals.append(r+self.gamma*return_vals[-1])
+			# return_vals= (return_vals[1:])[::-1] # to remove terminal R
+			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			#################################
-
-			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			
+			#######FAST return vals
+			rewards.append(terminal_R)
+			rewards=torch.tensor(rewards).type(torch.float32)
+			pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
+			neg_gam_arr=1/pos_gam_array
+			gmat=neg_gam_arr.unsqueeze(1)@pos_gam_array.unsqueeze(0) # gmat[i][j]=gamma^(j-i)
+			gmat=torch.triu(gmat)
+			return_vals=(gmat@rewards)[:-1]
+			return_vals=return_vals.to(DEVICE)
+			#############
+
+			
+
 			state_values=torch.cat(state_values).to(DEVICE)
 			actor_traces=torch.stack(actor_traces,dim=0).to(DEVICE)
 			critic_traces=torch.cat(critic_traces,dim=0).to(DEVICE)
