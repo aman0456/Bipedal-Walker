@@ -111,7 +111,7 @@ class Environment():
 		
 		for ep_num in pbar:
 			state,_ = self.env.reset()
-			if ep_num%100==0:
+			if (ep_num+1)%100==0:
 				_,_ = self.val_env.reset()
 			log_probs,state_values,rewards = [],[],[]
 			done=False
@@ -159,8 +159,19 @@ class Environment():
 			last10score[ep_num%10]=sum(rewards) + terminal_R if isinstance(terminal_R, int) else terminal_R.item()
 			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
 
-			with torch.no_grad():
-				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+
+			######ONE WAY to find return vals
+			# with torch.no_grad():
+			# 	return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+			###############################
+
+			######METHOD 2 to find return vals
+			return_vals=[terminal_R]
+			for r in rewards[::-1]:
+				return_vals.append(r+self.gamma*return_vals[-1])
+			return_vals= (return_vals[1:])[::-1] # to remove terminal R
+			#################################
+
 			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			
 			state_values=torch.cat(state_values).to(DEVICE)
