@@ -159,7 +159,7 @@ class Environment():
 			critic_loss.backward()
 			actor_optimizer.step()
 			critic_optimizer.step()
-		torch.save(self.actor, 'actor.pkl')
+		torch.save(self.actor.state_dict(), 'actor.pkl')
 		torch.save(self.critic, 'critic.pkl')
 		self.env.close()
 		self.val_env.close()

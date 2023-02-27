@@ -96,7 +96,7 @@ class Environment():
 		self.env.observation_space.seed(10)
 		self.actor=Actor(24)
 		self.critic=Critic(24)
-		self.train_eps=1000
+		self.train_eps=100000
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss()
 		self.actor_trace_decay=0.9
@@ -189,8 +189,9 @@ class Environment():
 			critic_loss.backward()
 			actor_optimizer.step()
 			critic_optimizer.step()
-		torch.save(self.actor, 'actor.pkl')
-		torch.save(self.critic, 'critic.pkl')
+			if ep_num % 1000 == 0:
+				torch.save(self.actor.state_dict(), 'actor.pkl')
+				torch.save(self.critic, 'critic.pkl')
 		self.env.close()
 		self.val_env.close()
 
