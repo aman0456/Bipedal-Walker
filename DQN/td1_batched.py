@@ -87,7 +87,7 @@ class Critic(torch.nn.Module):
 
 class Environment():
 	def __init__(self):
-		self.max_episode_steps=1000
+		self.max_episode_steps=600
 		self.env = gym.make('BipedalWalker-v3')
 		self.val_env=gym.make('BipedalWalker-v3',render_mode='human')
 		# print(self.env.action_space.shape[0])
@@ -151,13 +151,13 @@ class Environment():
 			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
 
 
-			######ONE WAY to find return vals
+			######ONE WAY to find return vals bootstrap
 			with torch.no_grad():
 				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
 			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
-			######METHOD 2 to find return vals
+			######METHOD 2 to find return vals rollout
 			# return_vals=[terminal_R]
 			# for r in rewards[::-1]:
 			# 	return_vals.append(r+self.gamma*return_vals[-1])
@@ -165,7 +165,7 @@ class Environment():
 			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			#################################
 
-			#######FAST return vals
+			#######maybe FAST return vals rollout
 			# rewards.append(terminal_R)
 			# rewards=torch.tensor(rewards).type(torch.float32)
 			# pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
