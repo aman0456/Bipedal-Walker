@@ -100,18 +100,18 @@ class Environment():
 		self.critic=Critic(24)
 		self.train_eps=10000
 		self.gamma=0.99
-		self.critic_loss_func=torch.nn.MSELoss()
-		self.actor_trace_decay=0.9
-		self.critic_trace_decay=0.9
+		self.critic_loss_func=torch.nn.MSELoss(reduction='sum')
+		self.batch_size=32
 
-	@profile
+	# @profile
 	def train_in_env(self,render=False):
 		actor_optimizer=torch.optim.Adam(self.actor.parameters())
 		critic_optimizer=torch.optim.Adam(self.critic.parameters())
 		last10steps=[0]*10
 		last10score=[0]*10
 		pbar=trange(self.train_eps)
-		
+		actor_loss_batch=[]
+		critic_loss_batch=[]
 		for ep_num in pbar:
 			state,_ = self.env.reset()
 			if (ep_num+1)%100==0:
@@ -119,11 +119,6 @@ class Environment():
 			log_probs,state_values,rewards = [],[],[]
 			done=False
 			
-			I=1
-			actor_traces=[]
-			critic_traces=[]
-			curr_actor_trace=0
-			curr_critic_trace=0
 			for _ in range(self.max_episode_steps):
 				state=torch.Tensor(state)
 				try:
@@ -137,21 +132,14 @@ class Environment():
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
 				if (ep_num+1)%100==0:
 					self.val_env.step(sampled_action.cpu().numpy())
-				
-				
-				curr_actor_trace=curr_actor_trace*self.actor_trace_decay*self.gamma+I*action_distri.log_prob(sampled_action)
-				actor_traces.append(curr_actor_trace)
-				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+I*value
-				critic_traces.append(curr_critic_trace)
-				
-				I=I*self.gamma
+			
+				log_probs.append(action_distri.log_prob(sampled_action)) # maybe add tnah correction	
 				state_values.append(value)
 				rewards.append(reward)
 				state=next_state
 				if done:
 					break
 
-			
 			if done:
 				terminal_R=0
 			else:
@@ -164,9 +152,9 @@ class Environment():
 
 
 			######ONE WAY to find return vals
-			# with torch.no_grad():
-			# 	return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
-			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
+			with torch.no_grad():
+				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
 			######METHOD 2 to find return vals
@@ -178,37 +166,56 @@ class Environment():
 			#################################
 
 			#######FAST return vals
-			rewards.append(terminal_R)
-			rewards=torch.tensor(rewards).type(torch.float32)
-			pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
-			neg_gam_arr=1/pos_gam_array
-			gmat=neg_gam_arr.unsqueeze(1)@pos_gam_array.unsqueeze(0) # gmat[i][j]=gamma^(j-i)
-			gmat=torch.triu(gmat)
-			return_vals=(gmat@rewards)[:-1]
-			return_vals=return_vals.to(DEVICE)
+			# rewards.append(terminal_R)
+			# rewards=torch.tensor(rewards).type(torch.float32)
+			# pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
+			# neg_gam_arr=1/pos_gam_array
+			# gmat=neg_gam_arr.unsqueeze(1)@pos_gam_array.unsqueeze(0) # gmat[i][j]=gamma^(j-i)
+			# gmat=torch.triu(gmat)
+			# return_vals=(gmat@rewards)[:-1]
+			# return_vals=return_vals.to(DEVICE)
 			###############################
-
-			
-
-			state_values=torch.cat(state_values).to(DEVICE)
-			actor_traces=torch.stack(actor_traces,dim=0).to(DEVICE)
-			critic_traces=torch.cat(critic_traces,dim=0).to(DEVICE)
-			
+	
+			log_probs=torch.stack(log_probs).to(DEVICE)
+			state_values=torch.cat(state_values).to(DEVICE)			
 			adv=return_vals-state_values
 			
 			######### MEAN or SUM, find what does better########
-			actor_loss=-torch.sum(actor_traces*(adv.detach()))		
-			critic_loss=-torch.sum(critic_traces*(adv.detach()))
-			
+			actor_loss=-torch.sum(log_probs*(adv.detach())).type(torch.float32)
+			critic_loss=self.critic_loss_func(state_values,return_vals).type(torch.float32)
+
+			actor_loss_batch.append(actor_loss)
+			critic_loss_batch.append(critic_loss)
+
+			if (ep_num+1)%self.batch_size==0:
+				mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
+				mean_critic_loss=torch.mean(torch.stack(critic_loss_batch))
+				actor_optimizer.zero_grad()
+				critic_optimizer.zero_grad()
+				mean_actor_loss.backward()
+				mean_critic_loss.backward()
+				actor_optimizer.step()
+				critic_optimizer.step()
+				actor_loss_batch=[]
+				critic_loss_batch=[]
+
+			if ep_num % 1000 == 0:
+				torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic{ep_num}.pkl')
+
+		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
+			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
+			mean_critic_loss=torch.mean(torch.stack(critic_loss_batch))
 			actor_optimizer.zero_grad()
 			critic_optimizer.zero_grad()
-			actor_loss.backward()
-			critic_loss.backward()
+			mean_actor_loss.backward()
+			mean_critic_loss.backward()
 			actor_optimizer.step()
 			critic_optimizer.step()
-			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 runs with sum in loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 runs with sum in loss/critic{ep_num}.pkl')
+			actor_loss_batch=[]
+			critic_loss_batch=[]
+		torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 

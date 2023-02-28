@@ -98,20 +98,22 @@ class Environment():
 		self.env.observation_space.seed(10)
 		self.actor=Actor(24)
 		self.critic=Critic(24)
-		self.train_eps=10000
+		self.train_eps=10
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss()
 		self.actor_trace_decay=0.9
 		self.critic_trace_decay=0.9
+		self.batch_size=8
 
-	@profile
+	# @profile
 	def train_in_env(self,render=False):
 		actor_optimizer=torch.optim.Adam(self.actor.parameters())
 		critic_optimizer=torch.optim.Adam(self.critic.parameters())
 		last10steps=[0]*10
 		last10score=[0]*10
 		pbar=trange(self.train_eps)
-		
+		actor_loss_batch=[]
+		critic_loss_batch=[]
 		for ep_num in pbar:
 			state,_ = self.env.reset()
 			if (ep_num+1)%100==0:
@@ -163,29 +165,29 @@ class Environment():
 			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
 
 
-			######ONE WAY to find return vals
+			######ONE WAY to find return vals using bootstrap
 			# with torch.no_grad():
 			# 	return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
 			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
-			######METHOD 2 to find return vals
-			# return_vals=[terminal_R]
-			# for r in rewards[::-1]:
-			# 	return_vals.append(r+self.gamma*return_vals[-1])
-			# return_vals= (return_vals[1:])[::-1] # to remove terminal R
-			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
+			######METHOD 2 to find return vals using rollout
+			return_vals=[terminal_R]
+			for r in rewards[::-1]:
+				return_vals.append(r+self.gamma*return_vals[-1])
+			return_vals= (return_vals[1:])[::-1] # to remove terminal R
+			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			#################################
 
-			#######FAST return vals
-			rewards.append(terminal_R)
-			rewards=torch.tensor(rewards).type(torch.float32)
-			pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
-			neg_gam_arr=1/pos_gam_array
-			gmat=neg_gam_arr.unsqueeze(1)@pos_gam_array.unsqueeze(0) # gmat[i][j]=gamma^(j-i)
-			gmat=torch.triu(gmat)
-			return_vals=(gmat@rewards)[:-1]
-			return_vals=return_vals.to(DEVICE)
+			#######maybe FAST return vals using rollout
+			# rewards.append(terminal_R)
+			# rewards=torch.tensor(rewards).type(torch.float32)
+			# pos_gam_array=torch.pow(self.gamma,torch.arange(rewards.shape[0]))
+			# neg_gam_arr=1/pos_gam_array
+			# gmat=neg_gam_arr.unsqueeze(1)@pos_gam_array.unsqueeze(0) # gmat[i][j]=gamma^(j-i)
+			# gmat=torch.triu(gmat)
+			# return_vals=(gmat@rewards)[:-1]
+			# return_vals=return_vals.to(DEVICE)
 			###############################
 
 			
@@ -199,16 +201,38 @@ class Environment():
 			######### MEAN or SUM, find what does better########
 			actor_loss=-torch.sum(actor_traces*(adv.detach()))		
 			critic_loss=-torch.sum(critic_traces*(adv.detach()))
-			
+
+			actor_loss_batch.append(actor_loss)
+			critic_loss_batch.append(critic_loss)
+
+			if (ep_num+1)%self.batch_size==0:
+				mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
+				mean_critic_loss=torch.mean(torch.stack(critic_loss_batch))
+				actor_optimizer.zero_grad()
+				critic_optimizer.zero_grad()
+				mean_actor_loss.backward()
+				mean_critic_loss.backward()
+				actor_optimizer.step()
+				critic_optimizer.step()
+				actor_loss_batch=[]
+				critic_loss_batch=[]
+
+			if ep_num % 1000 == 0:
+				torch.save(self.actor.state_dict(), f'saved_models/td1 eligb with sum in loss/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 eligb with sum in loss/critic{ep_num}.pkl')
+		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
+			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
+			mean_critic_loss=torch.mean(torch.stack(critic_loss_batch))
 			actor_optimizer.zero_grad()
 			critic_optimizer.zero_grad()
-			actor_loss.backward()
-			critic_loss.backward()
+			mean_actor_loss.backward()
+			mean_critic_loss.backward()
 			actor_optimizer.step()
 			critic_optimizer.step()
-			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 runs with sum in loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 runs with sum in loss/critic{ep_num}.pkl')
+			actor_loss_batch=[]
+			critic_loss_batch=[]
+		torch.save(self.actor.state_dict(), f'saved_models/td1 eligb with sum in loss/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 eligb with sum in loss/critic_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 
