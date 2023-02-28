@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import collections
 from tqdm import tqdm,trange
-from torch.distributions.transforms import SigmoidTransform, AffineTransform, ComposeTransform
+from torch.distributions.transforms import SigmoidTransform, AffineTransform, ComposeTransform,TanhTransform
 import matplotlib.pyplot as plt
 
 torch.manual_seed(10)
@@ -41,6 +41,7 @@ class Actor(torch.nn.Module):
 		self.relu=torch.nn.functional.relu
 		self.sigmoid_transform = SigmoidTransform()
 		self.affine_transform = AffineTransform(scale=2, loc=-1)
+		self.tanh_transform=TanhTransform()
 
 
 	def forward(self,X):
@@ -50,7 +51,8 @@ class Actor(torch.nn.Module):
 		mean=op[:4]
 		cov=torch.diag(torch.exp(op[4:]))
 		mvn = torch.distributions.multivariate_normal.MultivariateNormal(mean,cov)
-		transformed_dist = torch.distributions.TransformedDistribution(mvn, ComposeTransform([self.sigmoid_transform, self.affine_transform]))
+		# transformed_dist = torch.distributions.TransformedDistribution(mvn, ComposeTransform([self.sigmoid_transform, self.affine_transform]))
+		transformed_dist=torch.distributions.TransformedDistribution(mvn,self.tanh_transform)
 		return transformed_dist
 		# return multivar_normal_dist.transform(self.sigmoid_transform).transform(self.affine_transform)
 
@@ -96,7 +98,7 @@ class Environment():
 		self.env.observation_space.seed(10)
 		self.actor=Actor(24)
 		self.critic=Critic(24)
-		self.train_eps=100000
+		self.train_eps=10000
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss()
 		self.actor_trace_decay=0.9
@@ -130,7 +132,7 @@ class Environment():
 					pdb.set_trace()
 				value=self.critic(state)
 				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
-				sampled_action=sampled_action.clamp(-0.9999999,0.9999999)
+				sampled_action=sampled_action.clamp(-0.999,0.999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
 				if (ep_num+1)%100==0:
 					self.val_env.step(sampled_action.cpu().numpy())
@@ -173,7 +175,7 @@ class Environment():
 			# return_vals= (return_vals[1:])[::-1] # to remove terminal R
 			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			#################################
-			
+
 			#######FAST return vals
 			rewards.append(terminal_R)
 			rewards=torch.tensor(rewards).type(torch.float32)
@@ -183,7 +185,7 @@ class Environment():
 			gmat=torch.triu(gmat)
 			return_vals=(gmat@rewards)[:-1]
 			return_vals=return_vals.to(DEVICE)
-			#############
+			###############################
 
 			
 
@@ -193,8 +195,9 @@ class Environment():
 			
 			adv=return_vals-state_values
 			
-			actor_loss=-torch.mean(actor_traces*(adv.detach()))		
-			critic_loss=-torch.mean(critic_traces*(adv.detach()))
+			######### MEAN or SUM, find what does better########
+			actor_loss=-torch.sum(actor_traces*(adv.detach()))		
+			critic_loss=-torch.sum(critic_traces*(adv.detach()))
 			
 			actor_optimizer.zero_grad()
 			critic_optimizer.zero_grad()
@@ -203,8 +206,8 @@ class Environment():
 			actor_optimizer.step()
 			critic_optimizer.step()
 			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), 'actor.pkl')
-				torch.save(self.critic, 'critic.pkl')
+				torch.save(self.actor.state_dict(), f'saved_models/td1 runs with sum in loss/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 runs with sum in loss/critic{ep_num}.pkl')
 		self.env.close()
 		self.val_env.close()
 
