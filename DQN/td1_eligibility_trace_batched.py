@@ -101,8 +101,8 @@ class Environment():
 		self.train_eps=10
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss()
-		self.actor_trace_decay=0.9
-		self.critic_trace_decay=0.9
+		self.actor_trace_decay=0.5
+		self.critic_trace_decay=0.5
 		self.batch_size=8
 
 	# @profile

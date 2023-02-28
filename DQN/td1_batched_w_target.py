@@ -90,18 +90,28 @@ class Environment():
 		self.max_episode_steps=600
 		self.env = gym.make('BipedalWalker-v3')
 		self.val_env=gym.make('BipedalWalker-v3',render_mode='human')
-		# print(self.env.action_space.shape[0])
-		# print(self.env.action_space)
-		# print("State space: {}".format(env.observation_space))
-		# print("Action space: {}".format(env.action_space))
 		self.env.action_space.seed(10)
 		self.env.observation_space.seed(10)
 		self.actor=Actor(24)
 		self.critic=Critic(24)
+		# self.actor_target=Actor(24)
+		self.critic_target=Critic(24)
+		# for param,tparam in zip(self.actor.parameters(),self.actor_target.parameters()):
+		# 	tparam.data.copy_(param.data)
+
+		for param,tparam in zip(self.critic.parameters(),self.critic_target.parameters()):
+			tparam.data.copy_(param.data)
+
 		self.train_eps=10000
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss(reduction='sum')
 		self.batch_size=32
+		self.tau=0.39
+		self.render_ep=100
+
+	def soft_upd(self,model,target_model):
+		for param,tparam in zip(model.parameters(),target_model.parameters()):
+			tparam.data.copy_(param.data*self.tau+(1-self.tau)*tparam.data)
 
 	# @profile
 	def train_in_env(self,render=False):
@@ -112,11 +122,12 @@ class Environment():
 		pbar=trange(self.train_eps)
 		actor_loss_batch=[]
 		critic_loss_batch=[]
+		critic_loss=torch.tensor(3)
 		for ep_num in pbar:
 			state,_ = self.env.reset()
-			if render and (ep_num+1)%100==0:
+			if render and (ep_num+1)%self.render_ep==0:
 				_,_ = self.val_env.reset()
-			log_probs,state_values,rewards = [],[],[]
+			log_probs,state_values,rewards,state_values_target = [],[],[],[]
 			done=False
 			
 			for _ in range(self.max_episode_steps):
@@ -127,14 +138,16 @@ class Environment():
 					import pdb
 					pdb.set_trace()
 				value=self.critic(state)
+				target_value=self.critic_target(state)
 				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
 				sampled_action=sampled_action.clamp(-0.999,0.999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
-				if render and (ep_num+1)%100==0:
+				if render and (ep_num+1)%self.render_ep==0:
 					self.val_env.step(sampled_action.cpu().numpy())
 			
-				log_probs.append(action_distri.log_prob(sampled_action)) # maybe add tnah correction	
+				log_probs.append(action_distri.log_prob(sampled_action)) # maybe add tnah correction
 				state_values.append(value)
+				state_values_target.append(target_value)
 				rewards.append(reward)
 				state=next_state
 				if done:
@@ -144,16 +157,16 @@ class Environment():
 				terminal_R=0
 			else:
 				with torch.no_grad():
-					terminal_R= self.critic(torch.tensor(state))
+					terminal_R= self.critic_target(torch.tensor(state))
 
 			last10steps[ep_num%10]=len(rewards) + 1
 			last10score[ep_num%10]=sum(rewards) + terminal_R if isinstance(terminal_R, int) else terminal_R.item()
-			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
+			pbar.set_description(f'steps,score:{np.mean(last10steps)},{np.mean(last10score)},{critic_loss.item()}')
 
 
 			######ONE WAY to find return vals bootstrap
 			with torch.no_grad():
-				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+				return_vals=[rewards[i]+self.gamma*state_values_target[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
 			return_vals_bootstrap=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
@@ -196,12 +209,16 @@ class Environment():
 				mean_critic_loss.backward()
 				actor_optimizer.step()
 				critic_optimizer.step()
+				# self.soft_upd(self.actor,self.actor_target)
+				self.soft_upd(self.critic,self.critic_target)
 				actor_loss_batch=[]
 				critic_loss_batch=[]
 
 			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic{ep_num}.pkl')
+				torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss/critic{ep_num}.pkl')
+				# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss/actor_target{ep_num}.pkl')
+				torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss/critic_target{ep_num}.pkl')
 
 		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
 			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
@@ -212,10 +229,14 @@ class Environment():
 			mean_critic_loss.backward()
 			actor_optimizer.step()
 			critic_optimizer.step()
+			# self.soft_upd(self.actor,self.actor_target)
+			self.soft_upd(self.critic,self.critic_target)
 			actor_loss_batch=[]
 			critic_loss_batch=[]
-		torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor_last_ep.pkl')
-		torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic_last_ep.pkl')
+		torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss/critic_last_ep.pkl')
+		# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss/actor_target_last_ep.pkl')
+		torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss/critic_target_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 
