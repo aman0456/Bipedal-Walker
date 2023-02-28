@@ -116,7 +116,7 @@ class Environment():
 		critic_loss_batch=[]
 		for ep_num in pbar:
 			state,_ = self.env.reset()
-			if (ep_num+1)%100==0:
+			if render and (ep_num+1)%100==0:
 				_,_ = self.val_env.reset()
 			log_probs,state_values,rewards = [],[],[]
 			done=False
@@ -137,7 +137,7 @@ class Environment():
 				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
 				sampled_action=sampled_action.clamp(-0.999,0.999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
-				if (ep_num+1)%100==0:
+				if render and (ep_num+1)%100==0:
 					self.val_env.step(sampled_action.cpu().numpy())
 				
 				
