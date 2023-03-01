@@ -143,7 +143,7 @@ class Environment():
 				
 				curr_actor_trace=curr_actor_trace*self.actor_trace_decay*self.gamma+I*action_distri.log_prob(sampled_action)
 				actor_traces.append(curr_actor_trace)
-				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+I*value
+				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+value # note converted I*value to just I , as in latest ed of sutton barto
 				critic_traces.append(curr_critic_trace)
 				
 				I=I*self.gamma
@@ -171,7 +171,7 @@ class Environment():
 			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
-			######METHOD 2 to find return vals using rollout
+			######METHOD 2 to find return vals using rollout same as reward to go
 			return_vals=[terminal_R]
 			for r in rewards[::-1]:
 				return_vals.append(r+self.gamma*return_vals[-1])

@@ -215,10 +215,10 @@ class Environment():
 				critic_loss_batch=[]
 
 			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss/critic{ep_num}.pkl')
-				# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss/actor_target{ep_num}.pkl')
-				torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss/critic_target{ep_num}.pkl')
+				torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/critic{ep_num}.pkl')
+				# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/actor_target{ep_num}.pkl')
+				torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/critic_target{ep_num}.pkl')
 
 		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
 			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
@@ -233,10 +233,10 @@ class Environment():
 			self.soft_upd(self.critic,self.critic_target)
 			actor_loss_batch=[]
 			critic_loss_batch=[]
-		torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss/actor_last_ep.pkl')
-		torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss/critic_last_ep.pkl')
-		# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss/actor_target_last_ep.pkl')
-		torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss/critic_target_last_ep.pkl')
+		torch.save(self.actor.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/critic_last_ep.pkl')
+		# torch.save(self.actor_target.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/actor_target_last_ep.pkl')
+		torch.save(self.critic_target.state_dict(), f'saved_models/td1 w target with sum in loss gamma 0.6/critic_target_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 

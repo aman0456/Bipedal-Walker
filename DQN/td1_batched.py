@@ -116,9 +116,9 @@ class Environment():
 			state,_ = self.env.reset()
 			if render and (ep_num+1)%100==0:
 				_,_ = self.val_env.reset()
-			log_probs,state_values,rewards = [],[],[]
+			log_probs_gamma,state_values,rewards = [],[],[]
 			done=False
-			
+			I=1
 			for _ in range(self.max_episode_steps):
 				state=torch.Tensor(state)
 				try:
@@ -133,7 +133,8 @@ class Environment():
 				if render and (ep_num+1)%100==0:
 					self.val_env.step(sampled_action.cpu().numpy())
 			
-				log_probs.append(action_distri.log_prob(sampled_action)) # maybe add tnah correction	
+				log_probs_gamma.append(I*action_distri.log_prob(sampled_action)) # maybe add tnah correction	
+				I*=self.gamma
 				state_values.append(value)
 				rewards.append(reward)
 				state=next_state
@@ -157,7 +158,7 @@ class Environment():
 			return_vals_bootstrap=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
-			######METHOD 2 to find return vals rollout
+			######METHOD 2 to find return vals rollout same as reward to go
 			return_vals=[terminal_R]
 			for r in rewards[::-1]:
 				return_vals.append(r+self.gamma*return_vals[-1])
@@ -176,12 +177,12 @@ class Environment():
 			# return_vals=return_vals.to(DEVICE)
 			###############################
 	
-			log_probs=torch.stack(log_probs).to(DEVICE)
+			log_probs_gamma=torch.stack(log_probs_gamma).to(DEVICE)
 			state_values=torch.cat(state_values).to(DEVICE)			
 			adv=return_vals_mc-state_values
 			
 			######### MEAN or SUM, find what does better########
-			actor_loss=-torch.sum(log_probs*(adv.detach())).type(torch.float32)
+			actor_loss=-torch.sum(log_probs_gamma*(adv.detach())).type(torch.float32)
 			critic_loss=self.critic_loss_func(state_values,return_vals_bootstrap).type(torch.float32)
 
 			actor_loss_batch.append(actor_loss)
@@ -200,8 +201,8 @@ class Environment():
 				critic_loss_batch=[]
 
 			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic{ep_num}.pkl')
+				torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss/critic{ep_num}.pkl')
 
 		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
 			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
@@ -214,8 +215,8 @@ class Environment():
 			critic_optimizer.step()
 			actor_loss_batch=[]
 			critic_loss_batch=[]
-		torch.save(self.actor.state_dict(), f'saved_models/td1 with sum in loss/actor_last_ep.pkl')
-		torch.save(self.critic.state_dict(), f'saved_models/td1 with sum in loss/critic_last_ep.pkl')
+		torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss/critic_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 
