@@ -127,9 +127,9 @@ class Environment():
 			state,_ = self.env.reset()
 			if render and (ep_num+1)%self.render_ep==0:
 				_,_ = self.val_env.reset()
-			log_probs,state_values,rewards,state_values_target = [],[],[],[]
+			log_probs_gamma,state_values,rewards,state_values_target = [],[],[],[]
 			done=False
-			
+			I=1
 			for _ in range(self.max_episode_steps):
 				state=torch.Tensor(state)
 				try:
@@ -145,11 +145,12 @@ class Environment():
 				if render and (ep_num+1)%self.render_ep==0:
 					self.val_env.step(sampled_action.cpu().numpy())
 			
-				log_probs.append(action_distri.log_prob(sampled_action)) # maybe add tnah correction
+				log_probs_gamma.append(action_distri.log_prob(sampled_action)*I) # maybe add tnah correction
 				state_values.append(value)
 				state_values_target.append(target_value)
 				rewards.append(reward)
 				state=next_state
+				i*=self.gamma
 				if done:
 					break
 
@@ -189,12 +190,12 @@ class Environment():
 			# return_vals=return_vals.to(DEVICE)
 			###############################
 	
-			log_probs=torch.stack(log_probs).to(DEVICE)
+			log_probs_gamma=torch.stack(log_probs_gamma).to(DEVICE)
 			state_values=torch.cat(state_values).to(DEVICE)			
 			adv=return_vals_mc-state_values
 			
 			######### MEAN or SUM, find what does better########
-			actor_loss=-torch.sum(log_probs*(adv.detach())).type(torch.float32)
+			actor_loss=-torch.sum(log_probs_gamma*(adv.detach())).type(torch.float32)
 			critic_loss=self.critic_loss_func(state_values,return_vals_bootstrap).type(torch.float32)
 
 			actor_loss_batch.append(actor_loss)
