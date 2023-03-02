@@ -100,7 +100,8 @@ class Environment():
 		self.critic=Critic(24)
 		self.train_eps=10000
 		self.gamma=0.99
-		self.critic_loss_func=torch.nn.MSELoss(reduction='sum')
+		# self.critic_loss_func=torch.nn.MSELoss(reduction='sum')
+		self.critic_loss_func=torch.nn.HuberLoss(reduction='sum')
 		self.batch_size=32
 
 	# @profile
@@ -112,10 +113,19 @@ class Environment():
 		pbar=trange(self.train_eps)
 		actor_loss_batch=[]
 		critic_loss_batch=[]
+		self.actor.train()
+		self.critic.train()
+		critic_loss=torch.tensor(3)
 		for ep_num in pbar:
-			state,_ = self.env.reset()
 			if render and (ep_num+1)%100==0:
-				_,_ = self.val_env.reset()
+				self.actor.eval()
+				self.critic.eval()
+				self.run_val()
+				self.actor.train()
+				self.critic.train()
+
+			state,_ = self.env.reset()
+				
 			log_probs_gamma,state_values,rewards = [],[],[]
 			done=False
 			I=1
@@ -127,12 +137,9 @@ class Environment():
 					import pdb
 					pdb.set_trace()
 				value=self.critic(state)
-				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				sampled_action=action_distri.sample()#*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
 				sampled_action=sampled_action.clamp(-0.999,0.999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
-				if render and (ep_num+1)%100==0:
-					self.val_env.step(sampled_action.cpu().numpy())
-			
 				log_probs_gamma.append(I*action_distri.log_prob(sampled_action)) # maybe add tnah correction	
 				I*=self.gamma
 				state_values.append(value)
@@ -149,7 +156,7 @@ class Environment():
 
 			last10steps[ep_num%10]=len(rewards) + 1
 			last10score[ep_num%10]=sum(rewards) + terminal_R if isinstance(terminal_R, int) else terminal_R.item()
-			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
+			pbar.set_description(f'steps,score:{np.mean(last10steps)},{np.mean(last10score)},{critic_loss.item()}')
 
 
 			######ONE WAY to find return vals bootstrap
@@ -201,8 +208,8 @@ class Environment():
 				critic_loss_batch=[]
 
 			if ep_num % 1000 == 0:
-				torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss/actor{ep_num}.pkl')
-				torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss/critic{ep_num}.pkl')
+				torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss no explore/actor{ep_num}.pkl')
+				torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss no explore/critic{ep_num}.pkl')
 
 		if len(actor_loss_batch)!=0 and len(critic_loss_batch)!=0:
 			mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
@@ -215,12 +222,29 @@ class Environment():
 			critic_optimizer.step()
 			actor_loss_batch=[]
 			critic_loss_batch=[]
-		torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss/actor_last_ep.pkl')
-		torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss/critic_last_ep.pkl')
+		torch.save(self.actor.state_dict(), f'saved_models/td1 gamma factor in actor loss no explore/actor_last_ep.pkl')
+		torch.save(self.critic.state_dict(), f'saved_models/td1 gamma factor in actor loss no explore/critic_last_ep.pkl')
 		self.env.close()
 		self.val_env.close()
 
-
+	def run_val(self,eps=1):
+		for xx in range(eps):
+			# print(xx)
+			state,_ = self.val_env.reset()
+			for _ in range(self.max_episode_steps):
+				state=torch.Tensor(state)
+				try:
+					with torch.no_grad():
+						action_distri=self.actor(state) # torch.distribution
+				except:
+					import pdb
+					pdb.set_trace()
+				sampled_action=action_distri.sample()#*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				sampled_action=sampled_action.clamp(-0.999,0.999)
+				next_state, reward, done, _,_ = self.val_env.step(sampled_action.cpu().numpy())
+				if done:
+					break
+				state=next_state
 
 
 
