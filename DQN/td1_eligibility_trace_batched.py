@@ -7,7 +7,9 @@ import collections
 from tqdm import tqdm,trange
 from torch.distributions.transforms import SigmoidTransform, AffineTransform, ComposeTransform,TanhTransform
 import matplotlib.pyplot as plt
-
+import wandb
+wandb.init(project="TD1_elig_trace",config={
+    "return_vals": "both"})
 torch.manual_seed(10)
 np.random.seed(10)
 DEVICE='cpu'
@@ -87,7 +89,7 @@ class Critic(torch.nn.Module):
 
 class Environment():
 	def __init__(self):
-		self.max_episode_steps=1000
+		self.max_episode_steps=600
 		self.env = gym.make('BipedalWalker-v3')
 		self.val_env=gym.make('BipedalWalker-v3',render_mode='human')
 		# print(self.env.action_space.shape[0])
@@ -98,11 +100,11 @@ class Environment():
 		self.env.observation_space.seed(10)
 		self.actor=Actor(24)
 		self.critic=Critic(24)
-		self.train_eps=10
+		self.train_eps=3600
 		self.gamma=0.99
 		self.critic_loss_func=torch.nn.MSELoss()
-		self.actor_trace_decay=0.5
-		self.critic_trace_decay=0.5
+		self.actor_trace_decay=0.9
+		self.critic_trace_decay=0.9
 		self.batch_size=8
 
 	# @profile
@@ -114,18 +116,25 @@ class Environment():
 		pbar=trange(self.train_eps)
 		actor_loss_batch=[]
 		critic_loss_batch=[]
+		critic_loss=torch.tensor(3)
 		for ep_num in pbar:
-			state,_ = self.env.reset()
 			if render and (ep_num+1)%100==0:
-				_,_ = self.val_env.reset()
+				self.actor.eval()
+				self.critic.eval()
+				self.run_val()
+				self.actor.train()
+				self.critic.train()
+			state,_ = self.env.reset()
+			
 			log_probs,state_values,rewards = [],[],[]
 			done=False
-			
+			discounted_reward=0
 			I=1
 			actor_traces=[]
 			critic_traces=[]
 			curr_actor_trace=0
 			curr_critic_trace=0
+			rand_factor=np.random.rand()<0.2
 			for _ in range(self.max_episode_steps):
 				state=torch.Tensor(state)
 				try:
@@ -134,16 +143,17 @@ class Environment():
 					import pdb
 					pdb.set_trace()
 				value=self.critic(state)
-				sampled_action=action_distri.sample()*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				if rand_factor:
+					sampled_action=action_distri.sample()*(1+torch.randn(4)*0.5)+torch.randn(4)*0.2 #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				else:
+					sampled_action=action_distri.sample()
 				sampled_action=sampled_action.clamp(-0.999,0.999)
 				next_state, reward, done, _,_ = self.env.step(sampled_action.cpu().numpy())
-				if render and (ep_num+1)%100==0:
-					self.val_env.step(sampled_action.cpu().numpy())
-				
+				discounted_reward+=I*reward
 				
 				curr_actor_trace=curr_actor_trace*self.actor_trace_decay*self.gamma+I*action_distri.log_prob(sampled_action)
 				actor_traces.append(curr_actor_trace)
-				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+value # note converted I*value to just I , as in latest ed of sutton barto
+				curr_critic_trace=curr_critic_trace*self.critic_trace_decay*self.gamma+value # note converted I*value to just value , as in latest ed of sutton barto
 				critic_traces.append(curr_critic_trace)
 				
 				I=I*self.gamma
@@ -162,13 +172,13 @@ class Environment():
 
 			last10steps[ep_num%10]=len(rewards) + 1
 			last10score[ep_num%10]=sum(rewards) + terminal_R if isinstance(terminal_R, int) else terminal_R.item()
-			pbar.set_description(f'avg steps,score:{np.mean(last10steps)},{np.mean(last10score)}')
+			pbar.set_description(f'steps,score:{np.mean(last10steps)},{np.mean(last10score)},{critic_loss.item()}')
 
 
 			######ONE WAY to find return vals using bootstrap
-			# with torch.no_grad():
-			# 	return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
-			# return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
+			with torch.no_grad():
+				return_vals=[rewards[i]+self.gamma*state_values[i+1].item() for i in range(len(state_values)-1)]+[rewards[-1]+self.gamma*terminal_R]
+			return_vals_bootstrap=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			###############################
 
 			######METHOD 2 to find return vals using rollout same as reward to go
@@ -176,7 +186,7 @@ class Environment():
 			for r in rewards[::-1]:
 				return_vals.append(r+self.gamma*return_vals[-1])
 			return_vals= (return_vals[1:])[::-1] # to remove terminal R
-			return_vals=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
+			return_vals_mc=torch.tensor(return_vals).type(torch.float32).to(DEVICE)
 			#################################
 
 			#######maybe FAST return vals using rollout
@@ -190,20 +200,24 @@ class Environment():
 			# return_vals=return_vals.to(DEVICE)
 			###############################
 
-			
-
 			state_values=torch.cat(state_values).to(DEVICE)
 			actor_traces=torch.stack(actor_traces,dim=0).to(DEVICE)
 			critic_traces=torch.cat(critic_traces,dim=0).to(DEVICE)
 			
-			adv=return_vals-state_values
+			adv_mc=return_vals_mc-state_values
+			adv_bootstrap=return_vals_bootstrap-state_values
 			
 			######### MEAN or SUM, find what does better########
-			actor_loss=-torch.sum(actor_traces*(adv.detach()))		
-			critic_loss=-torch.sum(critic_traces*(adv.detach()))
+			actor_loss=-torch.sum(actor_traces*(adv_mc.detach()))		
+			critic_loss=-torch.mean(critic_traces*(adv_bootstrap.detach()))
 
 			actor_loss_batch.append(actor_loss)
 			critic_loss_batch.append(critic_loss)
+
+
+			loss_for_logging=critic_loss.item()
+			if not rand_factor:
+				wandb.log({"length of walk": len(rewards),"discounted reward":discounted_reward, "critic loss": loss_for_logging})
 
 			if (ep_num+1)%self.batch_size==0:
 				mean_actor_loss=torch.mean(torch.stack(actor_loss_batch))
@@ -236,6 +250,25 @@ class Environment():
 		self.env.close()
 		self.val_env.close()
 
+	def run_val(self,eps=1):
+		for xx in range(eps):
+			# print(xx)
+			state,_ = self.val_env.reset()
+			for _ in range(self.max_episode_steps):
+				state=torch.Tensor(state)
+				try:
+					with torch.no_grad():
+						action_distri=self.actor(state) # torch.distribution
+				except:
+					import pdb
+					pdb.set_trace()
+				sampled_action=action_distri.sample()#*(1+torch.randn(4)*0.05) #if np.random.rand() < 0.8 else (torch.rand(4)*2 - 1)
+				sampled_action=sampled_action.clamp(-0.999,0.999)
+				next_state, reward, done, _,_ = self.val_env.step(sampled_action.cpu().numpy())
+				if done:
+					break
+				state=next_state
+
 
 
 
@@ -243,4 +276,4 @@ class Environment():
 if __name__=='__main__':
 
 	a=Environment()
-	a.train_in_env(True)
+	a.train_in_env()
